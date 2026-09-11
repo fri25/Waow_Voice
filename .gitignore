@@ -1,0 +1,29 @@
+# --- Android / Gradle ---
+.gradle/
+build/
+**/build/
+local.properties
+captures/
+.externalNativeBuild/
+.cxx/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+*.hprof
+
+# --- IDE ---
+.idea/
+*.iml
+*.ipr
+*.iws
+.vscode/
+.DS_Store
+
+# --- Python (backend) ---
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.env

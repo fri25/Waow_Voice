@@ -1,0 +1,60 @@
+{
+  "_note": "Phrases fon remplies et validees par un locuteur natif. Ne pas traduire automatiquement.",
+  "champs": {
+    "nom":         {"fr": "Ici, dis-moi ton nom de famille. Appuie et parle.", "fon": "ɖɔ nyikɔ towe gudo tɔn ɔ nú mì ɖò fí. Tɛn bo ɖɔ xó."},
+    "prenom":      {"fr": "Ici, dis-moi ton prenom. Appuie et parle.", "fon": "ɖɔ nyikɔ towe nukɔntɔn ɔ nú mì ɖò fí. Tɛn bo ɖɔ xó."},
+    "date_jour":   {"fr": "Dis-moi le jour de ta naissance.", "fon": "ɖɔ azǎn e gbe è ji we ɔ́ nú mì."},
+    "date_mois":   {"fr": "Dis-moi le mois de ta naissance.", "fon": "ɖɔ sun e mɛ è ji we ɔ́ nú mì."},
+    "date_annee":  {"fr": "Dis-moi l'annee de ta naissance.", "fon": "ɖɔ xwè e mɛ è jì we é nú mì."},
+    "date":        {"fr": "Dis-moi ta date de naissance.", "fon": "ɖɔ azǎn e gbè è jì we é nú mì."},
+    "lieu":        {"fr": "Dis-moi ton lieu de naissance.", "fon": "ɖɔ fí e è jì we ɖè é nú mì."},
+    "telephone":   {"fr": "Dis-moi ton numero, un chiffre apres l'autre.", "fon": "Dɔ numɛro towe nu mi, numɛro ɖokpo ɖokpo."},
+    "adresse":     {"fr": "Dis-moi ton adresse ou ton quartier.", "fon": "ɖɔ adlɛsi towe alǒ xá towe nú mì."},
+    "profession":  {"fr": "Dis-moi ton metier.", "fon": "ɖɔ nǔ e a nɔ wà bo nɔ ɖu gbɛ̀ é nú mì."},
+    "cnss":        {"fr": "Dis-moi ton numero CNSS, un chiffre apres l'autre.", "fon": "Mi ɖɔ numɛro CNSS mitɔn nu mi, numɛro ɖokpo ɖokpo."},
+    "piece":       {"fr": "Dis-moi ton numero de piece d'identite, un chiffre apres l'autre.", "fon": "ɖɔ ID towe nú mì, ɖiɖe ɖokpo ɖokpo gudo nú ɖevo."},
+    "sexe":        {"fr": "Dis-moi si tu es un homme ou une femme.", "fon": "A nyí súnnu abǐ nyɔ̌nu nú mì."},
+    "matrimonial": {"fr": "Dis-moi ta situation matrimoniale.", "fon": "ɖɔ ninɔmɛ alɔwliwli towe tɔn nú mì."},
+    "email":       {"fr": "Dicte ton adresse email.", "fon": "ɖɔ adlɛsi e-mail towe tɔn."},
+    "nombre":      {"fr": "Dis-moi ce nombre, un chiffre apres l'autre.", "fon": "ɖɔ kɛ́n enɛ nú mì, kɛ́n ɖokpo ɖokpo."},
+    "texte":       {"fr": "Reponds pour ce champ.", "fon": "Xósin nú gle elɔ."}
+  },
+  "systeme": {
+    "appuie_parle": {"fr": "Appuie et parle.", "fon": "Tɛn bo ɖɔ xó."},
+    "incompris":    {"fr": "Je n'ai pas bien entendu, repete.", "fon": "Un se we ganji ǎ, vɔ́ ɖɔ."},
+    "jai_ecrit":    {"fr": "J'ai ecrit :", "fon": "Un wlan ɖɔ:"},
+    "est_bon":      {"fr": "C'est bon ?", "fon": "E nyɔ ?"},
+    "recommence":   {"fr": "D'accord, on recommence.", "fon": "E nyɔ, mi nu mi na lɛ vɔ bɛ."},
+    "attends":      {"fr": "Attends un peu.", "fon": "Nɔ te kpɛɖe."},
+    "valide":       {"fr": "Appuie sur ce bouton pour valider.", "fon": "Tɛ butɔn elɔ bo na dó ɖexlɛ."},
+    "fini":         {"fr": "Tu as fini, c'est bon.", "fon": "A ko fó, é nyɔ́."}
+  },
+  "chiffres": {
+    "0": {"fr": "zero",  "fon": "nùɖé ǎ"},
+    "1": {"fr": "un",    "fon": "ɖÉ"},
+    "2": {"fr": "deux",  "fon": "wè"},
+    "3": {"fr": "trois", "fon": "atɔn"},
+    "4": {"fr": "quatre","fon": "ɛnɛ"},
+    "5": {"fr": "cinq",  "fon": "atɔ́ɔ́n"},
+    "6": {"fr": "six",   "fon": "ayizɛ́n"},
+    "7": {"fr": "sept",  "fon": "tɛnwe"},
+    "8": {"fr": "huit",  "fon": "Azɔn tantɔn"},
+    "9": {"fr": "neuf",  "fon": "tɛntɔn"}
+  },
+  "vocabulaire": {
+    "oui_non": [
+      {"fon": "Ɛɛn", "fr": "oui", "valeur": "oui"},
+      {"fon": "gbeɖé", "fr": "non", "valeur": "non"}
+    ],
+    "sexe": [
+      {"fon": "sunnu", "fr": "homme", "valeur": "Masculin"},
+      {"fon": "nyɔnu", "fr": "femme", "valeur": "Feminin"}
+    ],
+    "matrimonial": [
+      {"fon": "Mɛ ɖokpo", "fr": "celibataire", "valeur": "Celibataire"},
+      {"fon": "alɔwliwli", "fr": "marie", "valeur": "Marie(e)"},
+      {"fon": "é man", "fr": "divorce", "valeur": "Divorce(e)"},
+      {"fon": "asúkúsi", "fr": "veuf", "valeur": "Veuf(ve)"}
+    ]
+  }
+}

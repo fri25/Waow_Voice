@@ -1,0 +1,23 @@
+<resources>
+    <!-- Etats de la bulle (fonctionnels) -->
+    <color name="bulle_repos">#0B6E4F</color>
+    <color name="bulle_ecoute">#C0392B</color>
+    <color name="bulle_traitement">#C07000</color>
+    <color name="bulle_parle">#1E8E5A</color>
+
+    <color name="surlignage_fond">#33FFC107</color>
+    <color name="surlignage_bord">#E6F57C00</color>
+
+    <!-- Palette : chaleur neutre + un accent vert profond -->
+    <color name="fond">#F7F5F0</color>
+    <color name="primaire">#0B6E4F</color>
+    <color name="accent_doux">#E4F1EA</color>
+    <color name="texte">#16201B</color>
+    <color name="texte_secondaire">#5C6B62</color>
+    <color name="champ_fond">#FFFFFF</color>
+    <color name="champ_bord">#DAD5CA</color>
+    <color name="separateur">#EDE9E0</color>
+    <color name="ok">#1E8E5A</color>
+    <color name="ko">#C0392B</color>
+    <color name="blanc">#FFFFFF</color>
+</resources>

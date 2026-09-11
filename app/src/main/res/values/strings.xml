@@ -1,0 +1,35 @@
+<resources>
+    <string name="app_name">Assistant Fon</string>
+    <string name="service_desc">Lit les formulaires a l ecran et guide en fon</string>
+    <string name="tagline">Guide vocal en fon</string>
+
+    <string name="hero_titre">Active l\'assistant</string>
+    <string name="hero_desc">Une bulle t\'aidera a remplir les formulaires, en fon.</string>
+    <string name="bouton_activer">Activer maintenant</string>
+
+    <string name="section_etat">Etat</string>
+    <string name="section_serveur">Serveur</string>
+    <string name="section_aide">Aide</string>
+
+    <string name="libelle_service">Service d\'accessibilite</string>
+    <string name="libelle_micro">Microphone</string>
+    <string name="etat_actif">Active</string>
+    <string name="etat_inactif">Desactive</string>
+    <string name="micro_ok">Autorise</string>
+    <string name="micro_ko">Non autorise</string>
+
+    <string name="autoriser_micro">Autoriser le microphone</string>
+    <string name="url_backend">Adresse du backend</string>
+    <string name="enregistrer_url">Enregistrer l\'adresse</string>
+    <string name="url_enregistree">Adresse enregistree</string>
+    <string name="mode_demo">Mode demo hors-ligne</string>
+    <string name="mode_demo_detail">Sans serveur : l\'appli invente les reponses pour la demo.</string>
+
+    <string name="aide">1. Autorise le micro, puis active le service d\'accessibilite.\n2. Ouvre un formulaire et touche la bulle pour ecouter la consigne.\n3. Maintiens la bulle pour parler, relache pour envoyer.\n4. Reponds oui ou non pour confirmer.</string>
+    <string name="etape_ou_activer">Reglages > Accessibilite > Assistant Fon, puis active.</string>
+
+    <string name="bulle_repos">FON</string>
+    <string name="bulle_ecoute">REC</string>
+    <string name="bulle_traitement">&#8230;</string>
+    <string name="bulle_parle">VOIX</string>
+</resources>
