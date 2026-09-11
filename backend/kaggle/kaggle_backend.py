@@ -49,18 +49,37 @@ print("deps ok", flush=True)
 # ----------------------------------------------------------------------- secrets
 
 
-def secret(nom: str) -> str:
-    """Secret Kaggle, sinon variable d'environnement, sinon chaine vide."""
+def secret(*noms: str) -> str:
+    """Premier secret Kaggle trouve parmi ces etiquettes, sinon l'environnement.
+
+    Les etiquettes varient d'un compte a l'autre (DEEPSEEK_API_KEY cote Modal,
+    DEEPSEEK_API_TOKEN dans le .env) : on essaie les deux plutot que de demarrer
+    en silence sans vision.
+    """
     try:
         from kaggle_secrets import UserSecretsClient
-        return (UserSecretsClient().get_secret(nom) or "").strip()
+        client = UserSecretsClient()
     except Exception:
-        return os.environ.get(nom, "").strip()
+        client = None
+    for nom in noms:
+        if client is not None:
+            try:
+                valeur = (client.get_secret(nom) or "").strip()
+                if valeur:
+                    print(f"secret trouve : {nom}", flush=True)
+                    return valeur
+            except Exception:
+                pass
+        valeur = os.environ.get(nom, "").strip()
+        if valeur:
+            return valeur
+    print("secret absent :", " / ".join(noms), flush=True)
+    return ""
 
 
-os.environ["DEEPSEEK_API_KEY"] = secret("DEEPSEEK_API_KEY")
+os.environ["DEEPSEEK_API_KEY"] = secret("DEEPSEEK_API_KEY", "DEEPSEEK_API_TOKEN", "DEEPSEEK")
 os.environ["API_TOKEN"] = secret("API_TOKEN")
-os.environ["GROQ_API_KEY"] = secret("GROQ_API_KEY")
+os.environ["GROQ_API_KEY"] = secret("GROQ_API_KEY", "GROQ")
 os.environ["AUDIO_DIR"] = AUDIO_DIR
 print(
     "secrets : deepseek=%s jeton=%s groq=%s"

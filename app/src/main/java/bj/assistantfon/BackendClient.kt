@@ -24,6 +24,18 @@ class BackendClient(context: Context) {
 
     private val prefs = context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
+    init {
+        // L'URL du tunnel change a chaque relance du backend. Quand l'APK est
+        // recompile avec une nouvelle adresse, elle remplace celle enregistree :
+        // sinon une simple mise a jour garderait l'ancien tunnel, qui est mort.
+        if (prefs.getString(CLE_URL_USINE, null) != URL_PAR_DEFAUT) {
+            prefs.edit()
+                .putString(CLE_URL_USINE, URL_PAR_DEFAUT)
+                .putString(CLE_URL, URL_PAR_DEFAUT)
+                .apply()
+        }
+    }
+
     var baseUrl: String
         get() = prefs.getString(CLE_URL, URL_PAR_DEFAUT) ?: URL_PAR_DEFAUT
         set(value) {
@@ -229,8 +241,10 @@ class BackendClient(context: Context) {
         private const val TAG = "BackendClient"
         private const val PREFS = "assistantfon"
         private const val CLE_URL = "base_url"
+        private const val CLE_URL_USINE = "base_url_usine"
         private const val CLE_DEMO = "mode_demo"
         private const val CLE_JETON = "jeton"
-        const val URL_PAR_DEFAUT = "http://127.0.0.1:8000"
+        // Tunnel Cloudflare du kernel Kaggle (change a chaque relance du backend).
+        const val URL_PAR_DEFAUT = "https://experience-circuit-district-bidding.trycloudflare.com"
     }
 }
