@@ -3,8 +3,10 @@
 # Reglages du kernel : Accelerator = GPU T4 x2, Internet = On, type "script"
 # (il continue de tourner navigateur ferme, jusqu'a ~12 h).
 #
-# Secrets Kaggle (Add-ons > Secrets) :
-#   DEEPSEEK_API_KEY  obligatoire (vision + noms propres)
+# Cles : dataset Kaggle prive "assistant-fon-cles" (fichier cles.json), declare
+# dans kernel-metadata.json. Les secrets Add-ons ne survivent pas a un push API.
+# Etiquettes lues :
+#   DEEPSEEK_API_KEY / DEEPSEEK_API_TOKEN  vision + noms propres
 #   API_TOKEN         facultatif  : si defini, l'app doit envoyer le meme
 #                                   jeton dans l'en-tete X-Token
 #   GROQ_API_KEY      facultatif  : Whisper pour les champs francais
@@ -49,8 +51,29 @@ print("deps ok", flush=True)
 # ----------------------------------------------------------------------- secrets
 
 
+def _cles_dataset() -> dict:
+    """Cles lues dans un dataset Kaggle prive (assistant-fon-cles/cles.json).
+
+    Un push par API remet les Add-ons du notebook a zero : les secrets coches
+    dans l'interface sont perdus a chaque version. Un dataset prive, lui, est
+    declare dans kernel-metadata.json et survit aux pushs.
+    """
+    import glob
+    import json as _json
+    for chemin in glob.glob("/kaggle/input/*/cles.json"):
+        try:
+            with open(chemin, encoding="utf-8") as f:
+                return _json.load(f)
+        except Exception:
+            pass
+    return {}
+
+
+CLES = _cles_dataset()
+
+
 def secret(*noms: str) -> str:
-    """Premier secret Kaggle trouve parmi ces etiquettes, sinon l'environnement.
+    """Premiere cle trouvee : secret Kaggle, dataset prive, puis environnement.
 
     Les etiquettes varient d'un compte a l'autre (DEEPSEEK_API_KEY cote Modal,
     DEEPSEEK_API_TOKEN dans le .env) : on essaie les deux plutot que de demarrer
@@ -70,6 +93,10 @@ def secret(*noms: str) -> str:
                     return valeur
             except Exception:
                 pass
+        valeur = str(CLES.get(nom) or "").strip()
+        if valeur:
+            print(f"cle trouvee (dataset) : {nom}", flush=True)
+            return valeur
         valeur = os.environ.get(nom, "").strip()
         if valeur:
             return valeur
