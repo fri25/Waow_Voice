@@ -67,7 +67,7 @@ La boucle complète est :
 
 - Application Android : boucle complète **codée et compilée**.
 - Backend : pipeline ASR + TTS + LLM **opérationnel** et déployé.
-- Corpus de phrases fon : rédigé et à valider à l'oreille par un locuteur natif.
+- Corpus de phrases fon : traduit en fon et intégré au backend.
 
 ## Éthique
 

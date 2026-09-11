@@ -15,6 +15,8 @@ Les consignes et confirmations sont des .wav generes une fois au demarrage
 puis servis en statique : latence quasi nulle, pas de traduction a la volee.
 """
 
+import base64
+import hashlib
 import io
 import json
 import os
@@ -37,6 +39,7 @@ ASR_MODEL = os.environ.get("ASR_MODEL", "Professor/mms-300m-fongbe")
 TTS_MODEL = os.environ.get("TTS_MODEL", "facebook/mms-tts-fon")
 DEEPSEEK_KEY = os.environ.get("DEEPSEEK_API_KEY", "").strip()
 DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
+DEEPSEEK_VISION_MODEL = os.environ.get("DEEPSEEK_VISION_MODEL", "deepseek-flash")
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "whisper-large-v3")
 SR = 16000
@@ -358,6 +361,87 @@ def normaliser_llm(texte_fon: str, type_champ: str):
         return None
 
 
+# ------------------------------------------------------------------ vision ecran
+
+def _exemples_champs() -> str:
+    """Quelques correspondances validees (label FR -> consigne fon) pour amorcer le modele."""
+    lignes = []
+    for cle, noeud in PHRASES["champs"].items():
+        fr = (noeud.get("fr") or "").strip()
+        fon = (noeud.get("fon") or "").strip()
+        if fr and fon:
+            lignes.append(f'- "{fr}" (type {cle}) -> {fon}')
+    return "\n".join(lignes)
+
+
+PROMPT_VISION = (
+    "Tu es l'assistant vocal d'une personne qui ne lit pas le francais et ne "
+    "sait pas utiliser le clavier. On te donne la capture d'ecran d'un ecran "
+    "quelconque (application, site, formulaire).\n"
+    "1) Repere la zone ou le champ que la personne doit remplir maintenant.\n"
+    "2) Choisis son type parmi : nom, prenom, date_jour, date_mois, date_annee, "
+    "date, lieu, telephone, adresse, profession, cnss, piece, sexe, matrimonial, "
+    "email, nombre, texte.\n"
+    "3) Ecris la phrase a dire a l'oral en fon, courte et naturelle, jamais en "
+    "francais, dans le style des exemples.\n"
+    "Reponds UNIQUEMENT par un objet JSON avec les cles : "
+    '"description" (une phrase en francais), "champ" (le libelle lu a l\'ecran), '
+    '"categorie" (un des types), "fon" (la phrase en fon).\n\n'
+    "Exemples de style (libelle en francais, consigne en fon) :\n"
+    + _exemples_champs()
+)
+
+
+def _extraire_json(texte: str):
+    """Recupere le premier objet JSON, meme entoure de ``` ou de texte."""
+    if not texte:
+        return None
+    nettoye = re.sub(r"```(?:json)?", "", texte).strip("` \n")
+    debut = nettoye.find("{")
+    fin = nettoye.rfind("}")
+    if debut < 0 or fin <= debut:
+        return None
+    try:
+        return json.loads(nettoye[debut:fin + 1])
+    except Exception:
+        return None
+
+
+def analyser_ecran(image: bytes):
+    """Capture d'ecran -> {description, champ, categorie, fon} via DeepSeek vision."""
+    if not DEEPSEEK_KEY:
+        return None
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=DEEPSEEK_KEY, base_url="https://api.deepseek.com")
+        b64 = base64.b64encode(image).decode("ascii")
+        reponse = client.chat.completions.create(
+            model=DEEPSEEK_VISION_MODEL,
+            temperature=0,
+            max_tokens=800,
+            extra_body={"thinking": {"type": "disabled"}},
+            messages=[
+                {"role": "system", "content": PROMPT_VISION},
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "Voici la capture d'ecran. Applique la consigne."},
+                        {"type": "image_url", "image_url": {"url": f"data:image/png;base64,{b64}"}},
+                    ],
+                },
+            ],
+        )
+        contenu = (reponse.choices[0].message.content or "").strip()
+        donnees = _extraire_json(contenu)
+        if donnees and (donnees.get("fon") or "").strip():
+            return donnees
+        print(f"[Vision] reponse inattendue : {contenu[:200]}")
+        return None
+    except Exception as exc:  # pragma: no cover
+        print(f"[Vision] echec : {exc}")
+        return None
+
+
 # ------------------------------------------------------------------------- demarrage
 
 def preparer_audio():
@@ -381,7 +465,7 @@ def _au_demarrage():
 
 @app.get("/")
 def racine():
-    return {"service": "assistant-fon", "endpoints": ["/guide", "/transcrire", "/sante"]}
+    return {"service": "assistant-fon", "endpoints": ["/guide", "/comprendre", "/transcrire", "/sante"]}
 
 
 @app.get("/sante")
@@ -416,6 +500,42 @@ def guide(payload: dict):
     _audio_pret.wait(timeout=120)
     fichier = fichier_champ(type_champ)
     return {"categorie": type_champ, "audio_url": f"/audio/{fichier.name}", "mode_saisie": mode}
+
+
+@app.post("/comprendre")
+async def comprendre(image: UploadFile = File(...)):
+    """Usage general : capture d'ecran -> que dit l'assistant (en fon)."""
+    donnees = await image.read()
+    analyse = analyser_ecran(donnees)
+
+    if not analyse:
+        _audio_pret.wait(timeout=60)
+        return {
+            "statut": "incompris",
+            "description": None,
+            "champ": None,
+            "categorie": "texte",
+            "fon": None,
+            "audio_url": "/audio/sys_incompris.wav",
+        }
+
+    fon = (analyse.get("fon") or "").strip()
+    categorie = analyse.get("categorie") or "texte"
+    if categorie not in PHRASES["champs"]:
+        categorie = "texte"
+
+    _audio_pret.wait(timeout=120)
+    empreinte = hashlib.md5(fon.encode("utf-8")).hexdigest()[:12]
+    chemin = _fichier(f"vision_{empreinte}", fon)
+
+    return {
+        "statut": "ok",
+        "description": analyse.get("description"),
+        "champ": analyse.get("champ"),
+        "categorie": categorie,
+        "fon": fon,
+        "audio_url": f"/audio/{chemin.name}",
+    }
 
 
 @app.post("/transcrire")

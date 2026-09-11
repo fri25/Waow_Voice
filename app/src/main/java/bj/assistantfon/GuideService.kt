@@ -5,22 +5,28 @@ import android.accessibilityservice.AccessibilityService
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
 import android.graphics.PixelFormat
 import android.media.AudioAttributes
 import android.media.MediaPlayer
+import android.os.Build
 import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import android.speech.tts.TextToSpeech
 import android.speech.tts.UtteranceProgressListener
 import android.util.Log
+import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.Locale
+import java.util.concurrent.Executor
 import java.util.concurrent.Executors
 
 /**
@@ -45,6 +51,8 @@ class GuideService : AccessibilityService() {
 
     private val executeur = Executors.newSingleThreadExecutor()
     private val ui = Handler(Looper.getMainLooper())
+    private val rafraichirRunnable = Runnable { rafraichirSurlignage() }
+    private val executorCapture = Executor { commande -> ui.post(commande) }
 
     private var champs: List<Champ> = emptyList()
     private var indexCourant = 0
@@ -146,9 +154,120 @@ class GuideService : AccessibilityService() {
 
     // ------------------------------------------------------------------- guidage
 
+    /**
+     * Tap sur la bulle : on capture l'ecran et on demande au modele vision
+     * (usage general). Repli sur la lecture de l'arbre d'accessibilite si la
+     * capture est indisponible (API < 30) ou en mode demo.
+     */
     private fun surTape() {
         if (enEcoute || phase == Phase.ATTENTE_CONFIRMATION) return
+        if (backend.modeDemoHorsLigne || Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+            guiderParAccessibilite()
+            return
+        }
+        comprendreEcran()
+    }
 
+    private fun comprendreEcran() {
+        changerEtat(Etat.TRAITEMENT)
+        try {
+            takeScreenshot(Display.DEFAULT_DISPLAY, executorCapture, object : TakeScreenshotCallback {
+                override fun onSuccess(result: ScreenshotResult) {
+                    val tampon = result.hardwareBuffer
+                    val bitmap = Bitmap.wrapHardwareBuffer(tampon, result.colorSpace)
+                    val octets = if (bitmap != null) {
+                        ByteArrayOutputStream().use { flux ->
+                            bitmap.compress(Bitmap.CompressFormat.PNG, 80, flux)
+                            flux.toByteArray()
+                        }
+                    } else {
+                        null
+                    }
+                    tampon.close()
+
+                    if (octets == null || octets.isEmpty()) {
+                        guiderParAccessibilite()
+                    } else {
+                        envoyerVision(octets)
+                    }
+                }
+
+                override fun onFailure(errorCode: Int) {
+                    Log.w(TAG, "capture ecran echouee : $errorCode")
+                    guiderParAccessibilite()
+                }
+            })
+        } catch (e: Exception) {
+            Log.w(TAG, "takeScreenshot : ${e.message}")
+            guiderParAccessibilite()
+        }
+    }
+
+    private fun envoyerVision(octets: ByteArray) {
+        val fichier = File(cacheDir, "ecran_${System.currentTimeMillis()}.png")
+        try {
+            fichier.writeBytes(octets)
+        } catch (e: Exception) {
+            Log.w(TAG, "ecriture capture : ${e.message}")
+            guiderParAccessibilite()
+            return
+        }
+
+        executeur.execute {
+            val reponse = backend.comprendre(fichier)
+            fichier.delete()
+            ui.post {
+                if (reponse == null || reponse.statut != "ok") {
+                    guiderParAccessibilite()
+                } else {
+                    appliquerVision(reponse)
+                }
+            }
+        }
+    }
+
+    private fun appliquerVision(reponse: ReponseVision) {
+        categorieCourante = reponse.categorie.ifBlank { TypeChamp.TEXTE }
+        phase = Phase.ATTENTE_VALEUR
+
+        val index = localiserChamp(reponse.champ)
+        if (index >= 0) {
+            indexCourant = index
+            focaliser(index)
+            surligner(index)
+        } else {
+            retirerSurlignage()
+        }
+
+        val audio = backend.urlAbsolue(reponse.audioUrl)
+        val secours = reponse.fon ?: SecoursDemo.instruction(categorieCourante)
+        jouerAudio(audio, secours) { changerEtat(Etat.REPOS) }
+        Log.d(TAG, "Vision champ='${reponse.champ}' cat=$categorieCourante fon='${reponse.fon}'")
+    }
+
+    /** Retrouve le noeud correspondant au libelle renvoye par la vision. */
+    private fun localiserChamp(label: String?): Int {
+        if (label.isNullOrBlank()) return -1
+        champs = lecteur.lire()
+        if (champs.isEmpty()) return -1
+        val cible = normaliserLibelle(label)
+        var index = champs.indexOfFirst { normaliserLibelle(it.label) == cible }
+        if (index < 0) {
+            index = champs.indexOfFirst {
+                val l = normaliserLibelle(it.label)
+                l.isNotBlank() && (l.contains(cible) || cible.contains(l))
+            }
+        }
+        return index
+    }
+
+    private fun normaliserLibelle(s: String): String =
+        java.text.Normalizer.normalize(s.lowercase(Locale.FRENCH), java.text.Normalizer.Form.NFD)
+            .replace(Regex("\\p{Mn}+"), "")
+            .replace(Regex("[^a-z0-9]+"), " ")
+            .trim()
+
+    private fun guiderParAccessibilite() {
         champs = lecteur.lire()
         champs.forEachIndexed { i, c ->
             Log.d(TAG, "[$i] label='${c.label}' type=${c.type} bounds=${lecteur.bounds(i)}")
@@ -449,6 +568,56 @@ class GuideService : AccessibilityService() {
         surlignage = null
     }
 
+    /**
+     * Le scroll deplace le champ sous le rectangle fixe : on le suit. On
+     * rafraichit le noeud (coordonnees a jour) et, s'il a ete recycle par la
+     * WebView, on relit l'ecran pour retrouver le meme champ. Evenements
+     * tempores pour ne pas parcourir l'arbre a chaque frame.
+     */
+    private fun planifierRafraichissement() {
+        if (enEcoute) return
+        if (phase != Phase.ATTENTE_VALEUR && phase != Phase.ATTENTE_CONFIRMATION) return
+        ui.removeCallbacks(rafraichirRunnable)
+        ui.postDelayed(rafraichirRunnable, DELAI_RAFRAICHISSEMENT)
+    }
+
+    private fun rafraichirSurlignage() {
+        if (enEcoute) return
+        if (phase != Phase.ATTENTE_VALEUR && phase != Phase.ATTENTE_CONFIRMATION) return
+        if (lecteur.rafraichir(indexCourant)) {
+            surligner(indexCourant)
+        } else if (relocaliserChamp()) {
+            surligner(indexCourant)
+        } else {
+            retirerSurlignage()
+        }
+    }
+
+    /** Retrouve le champ courant apres relecture, par libelle puis par position/type. */
+    private fun relocaliserChamp(): Boolean {
+        val ancien = champs.getOrNull(indexCourant) ?: return false
+        val label = ancien.label
+        val type = ancien.type
+        val position = indexCourant
+
+        val nouveaux = lecteur.lire()
+        if (nouveaux.isEmpty()) return false
+        champs = nouveaux
+
+        val parLabel = if (label.isNotBlank()) nouveaux.indexOfFirst { it.label == label } else -1
+        val parPosition = if (position in nouveaux.indices) position else -1
+        val parType = nouveaux.indexOfFirst { it.type == type }
+        val index = when {
+            parLabel >= 0 -> parLabel
+            parPosition >= 0 -> parPosition
+            parType >= 0 -> parType
+            else -> -1
+        }
+        if (index < 0) return false
+        indexCourant = index
+        return true
+    }
+
     private fun changerEtat(etat: Etat) {
         if (::bulle.isInitialized) bulle.changerEtat(etat)
     }
@@ -460,17 +629,22 @@ class GuideService : AccessibilityService() {
 
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         val e = event ?: return
-        if (e.eventType != AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED) return
+        when (e.eventType) {
+            AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED -> {
+                val paquet = e.packageName?.toString() ?: return
+                if (paquet == derniereApp) return
+                derniereApp = paquet
 
-        val paquet = e.packageName?.toString() ?: return
-        if (paquet == derniereApp) return
-        derniereApp = paquet
+                // On repart propre quand l'utilisateur change d'application.
+                if (phase == Phase.AUCUNE && !enEcoute) {
+                    lecteur.recycler()
+                    champs = emptyList()
+                    retirerSurlignage()
+                }
+            }
 
-        // On repart propre quand l'utilisateur change d'application.
-        if (phase == Phase.AUCUNE && !enEcoute) {
-            lecteur.recycler()
-            champs = emptyList()
-            retirerSurlignage()
+            AccessibilityEvent.TYPE_VIEW_SCROLLED,
+            AccessibilityEvent.TYPE_WINDOW_CONTENT_CHANGED -> planifierRafraichissement()
         }
     }
 
@@ -478,6 +652,7 @@ class GuideService : AccessibilityService() {
 
     override fun onDestroy() {
         super.onDestroy()
+        ui.removeCallbacks(rafraichirRunnable)
         try {
             executeur.shutdown()
         } catch (_: Exception) {
@@ -502,5 +677,6 @@ class GuideService : AccessibilityService() {
     companion object {
         const val TAG = "GuideService"
         private const val DELAI_APPUI_LONG = 350L
+        private const val DELAI_RAFRAICHISSEMENT = 120L
     }
 }

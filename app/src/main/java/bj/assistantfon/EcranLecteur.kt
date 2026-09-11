@@ -38,6 +38,19 @@ class EcranLecteur(private val service: AccessibilityService) {
         return if (rect.width() > 0 && rect.height() > 0) rect else null
     }
 
+    /**
+     * Revalide le noeud apres un scroll : refresh() met a jour ses coordonnees
+     * et renvoie false si le noeud a ete recycle (frequent dans une WebView).
+     */
+    fun rafraichir(index: Int): Boolean {
+        val node = noeuds.getOrNull(index) ?: return false
+        return try {
+            node.refresh()
+        } catch (_: Exception) {
+            false
+        }
+    }
+
     fun recycler() {
         noeuds.forEach {
             try {
@@ -70,7 +83,7 @@ class EcranLecteur(private val service: AccessibilityService) {
         // On remonte les ancetres et on cherche un texte juste au-dessus du champ.
         var ancetre = node.parent
         var niveau = 0
-        while (ancetre != null && niveau < 5) {
+        while (ancetre != null && niveau < 6) {
             val candidats = mutableListOf<Pair<String, Rect>>()
             for (i in 0 until ancetre.childCount) {
                 val enfant = ancetre.getChild(i) ?: continue
@@ -103,14 +116,31 @@ class EcranLecteur(private val service: AccessibilityService) {
                 .maxByOrNull { it.second.right }
             if (cote != null) return nettoyer(cote.first)
 
+            // <label> qui englobe le champ : son propre texte est le libelle.
+            val texteAncetre = ancetre.text?.toString()?.trim().orEmpty()
+            if (texteAncetre.isNotBlank() && texteAncetre.length <= 80) {
+                return nettoyer(texteAncetre)
+            }
+
             ancetre = ancetre.parent
             niveau++
         }
 
         node.text?.toString()?.takeIf { it.isNotBlank() }?.let { return nettoyer(it) }
+
+        // Dernier recours : un identifiant parlant (ex. "nom_de_famille").
+        node.viewIdResourceName?.substringAfterLast('/')?.let { id ->
+            val propre = nettoyer(id.replace('_', ' ').replace('-', ' '))
+            if (propre.length >= 3 && propre.any { it.isLetter() }) return propre
+        }
         return ""
     }
 
     private fun nettoyer(texte: String): String =
-        texte.replace(Regex("\\s+"), " ").trim().take(80)
+        texte
+            .replace(Regex("\\s+"), " ")
+            .replace(Regex("\\s*[*(](obligatoire|requis|required|optionnel|facultatif)[)*]", RegexOption.IGNORE_CASE), "")
+            .replace(Regex("[*:]+\\s*$"), "")
+            .trim()
+            .take(80)
 }

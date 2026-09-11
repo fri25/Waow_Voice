@@ -31,7 +31,7 @@ class BackendClient(context: Context) {
         }
 
     var modeDemoHorsLigne: Boolean
-        get() = prefs.getBoolean(CLE_DEMO, true)
+        get() = prefs.getBoolean(CLE_DEMO, false)
         set(value) = prefs.edit().putBoolean(CLE_DEMO, value).apply()
 
     fun guide(champs: List<Champ>, indexCourant: Int): ReponseGuide? {
@@ -124,6 +124,50 @@ class BackendClient(context: Context) {
         }
     }
 
+    /** Vision d'usage general : capture d'ecran -> consigne fon. */
+    fun comprendre(image: File): ReponseVision? {
+        if (modeDemoHorsLigne) return null
+        return try {
+            val limite = "----AssistantFon${System.currentTimeMillis()}"
+            val url = URL("$baseUrl/comprendre")
+            val conn = (url.openConnection() as HttpURLConnection).apply {
+                requestMethod = "POST"
+                connectTimeout = 5000
+                readTimeout = 120000
+                doOutput = true
+                setChunkedStreamingMode(0)
+                setRequestProperty("Content-Type", "multipart/form-data; boundary=$limite")
+            }
+
+            DataOutputStream(conn.outputStream).use { out ->
+                ecrireFichier(out, limite, "image", image, "image/png")
+                out.writeBytes("--$limite--\r\n")
+                out.flush()
+            }
+
+            val code = conn.responseCode
+            val texte = (if (code in 200..299) conn.inputStream else conn.errorStream)
+                ?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }
+            conn.disconnect()
+            if (code !in 200..299 || texte.isNullOrBlank()) {
+                Log.w(TAG, "comprendre HTTP $code")
+                return null
+            }
+            val json = JSONObject(texte)
+            ReponseVision(
+                statut = chaineOuNull(json, "statut") ?: "incompris",
+                description = chaineOuNull(json, "description"),
+                champ = chaineOuNull(json, "champ"),
+                categorie = chaineOuNull(json, "categorie") ?: TypeChamp.TEXTE,
+                fon = chaineOuNull(json, "fon"),
+                audioUrl = chaineOuNull(json, "audio_url")
+            )
+        } catch (e: Exception) {
+            Log.w(TAG, "comprendre echec : ${e.message}")
+            null
+        }
+    }
+
     /** Transforme une URL relative renvoyee par le backend en URL absolue. */
     fun urlAbsolue(u: String?): String? {
         if (u.isNullOrBlank()) return null
@@ -143,10 +187,16 @@ class BackendClient(context: Context) {
         out.writeBytes("$valeur\r\n")
     }
 
-    private fun ecrireFichier(out: DataOutputStream, limite: String, nom: String, fichier: File) {
+    private fun ecrireFichier(
+        out: DataOutputStream,
+        limite: String,
+        nom: String,
+        fichier: File,
+        type: String = "audio/wav"
+    ) {
         out.writeBytes("--$limite\r\n")
         out.writeBytes("Content-Disposition: form-data; name=\"$nom\"; filename=\"${fichier.name}\"\r\n")
-        out.writeBytes("Content-Type: audio/wav\r\n\r\n")
+        out.writeBytes("Content-Type: $type\r\n\r\n")
         BufferedInputStream(FileInputStream(fichier)).use { entree ->
             val tampon = ByteArray(8192)
             var lus: Int

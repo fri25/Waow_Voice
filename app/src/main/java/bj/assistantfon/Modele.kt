@@ -24,6 +24,16 @@ data class ReponseTranscription(
     val audioConfirmationUrl: String?
 )
 
+/** Reponse de POST /comprendre (vision de l'ecran -> consigne fon). */
+data class ReponseVision(
+    val statut: String,
+    val description: String?,
+    val champ: String?,
+    val categorie: String,
+    val fon: String?,
+    val audioUrl: String?
+)
+
 /**
  * Types de champs du PRD (annexe). Sert au routage cote backend
  * (vocabulaire ferme vs texte libre).

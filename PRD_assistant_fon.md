@@ -223,7 +223,7 @@ L'AccessibilityService voit tout l'écran, et l'appli écoute le micro. C'est ex
 Trois arguments à tenir, **et à rendre vrais dans le code** :
 
 1. **Le micro n'écoute que sur appui long.** Jamais en continu, jamais de mot-clé de réveil. L'état rouge de la bulle le rend visible.
-2. **Rien n'est conservé.** L'audio est traité puis supprimé. Seuls les libellés de champs transitent, jamais les valeurs saisies en dehors du cycle de réponse immédiat. Aucune base de données.
+2. **Rien n'est conservé.** L'audio est traité puis supprimé. Seuls les libellés de champs transitent, jamais les valeurs saisies en dehors du cycle de réponse immédiat. Aucune base de données. *(En phase de test uniquement, l'enregistrement est gardé temporairement dans le cache de l'appareil pour diagnostic ; il ne quitte jamais le téléphone et est purgé avant toute démo.)*
 3. **Aucune saisie clavier n'est lue.** On ne s'abonne pas aux événements de frappe, uniquement à la structure des champs.
 
 ---
