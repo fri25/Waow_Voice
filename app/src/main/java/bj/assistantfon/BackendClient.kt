@@ -245,6 +245,6 @@ class BackendClient(context: Context) {
         private const val CLE_DEMO = "mode_demo"
         private const val CLE_JETON = "jeton"
         // Tunnel Cloudflare du kernel Kaggle (change a chaque relance du backend).
-        const val URL_PAR_DEFAUT = "https://experience-circuit-district-bidding.trycloudflare.com"
+        const val URL_PAR_DEFAUT = "https://gage-shaved-regression-outlets.trycloudflare.com"
     }
 }
