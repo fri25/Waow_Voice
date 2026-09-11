@@ -27,7 +27,7 @@ import wave
 from pathlib import Path
 
 import numpy as np
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
 
@@ -42,6 +42,8 @@ DEEPSEEK_MODEL = os.environ.get("DEEPSEEK_MODEL", "deepseek-chat")
 DEEPSEEK_VISION_MODEL = os.environ.get("DEEPSEEK_VISION_MODEL", "deepseek-flash")
 GROQ_KEY = os.environ.get("GROQ_API_KEY", "").strip()
 GROQ_MODEL = os.environ.get("GROQ_MODEL", "whisper-large-v3")
+# Jeton partage : si vide, l'API reste ouverte (dev local uniquement).
+API_TOKEN = os.environ.get("API_TOKEN", "").strip()
 SR = 16000
 
 # Champs dont la valeur attendue est en francais -> ASR Whisper (Groq).
@@ -50,7 +52,13 @@ CATEGORIES_FR = {"nom", "prenom", "lieu", "adresse", "profession", "email", "tex
 PHRASES = json.loads((BASE / "phrases_fon.json").read_text(encoding="utf-8"))
 
 # Types a vocabulaire ferme -> jamais de LLM (PRD 6.1).
-CATEGORIES_FERMEES = {"oui_non", "sexe", "matrimonial"}
+CATEGORIES_FERMEES = {"oui_non", "sexe", "matrimonial", "case"}
+# Une case a cocher se repond par oui / non : meme vocabulaire.
+ALIAS_VOCABULAIRE = {"case": "oui_non"}
+# Valeurs ecrites en francais : le TTS fon ne sait pas les prononcer. On renvoie
+# les phrases fon separement et l'app fait lire la valeur par le TTS francais
+# du telephone, sinon la relecture est inaudible et la validation ne veut rien dire.
+CATEGORIES_VOIX_FR = {"nom", "prenom", "lieu", "adresse", "profession", "email"}
 # Types numeriques -> dictee chiffre par chiffre + concatenation des .wav.
 CATEGORIES_NUMERIQUES = {
     "telephone", "cnss", "piece", "nombre", "date_jour", "date_annee", "date_mois",
@@ -62,6 +70,7 @@ _asr = None
 _tts = None
 _tts_tok = None
 _verrou = threading.Lock()
+_verrou_audio = threading.Lock()
 _audio_pret = threading.Event()
 
 try:
@@ -86,6 +95,11 @@ def _slug(texte: str) -> str:
     t = "".join(c for c in t if unicodedata.category(c) != "Mn")
     t = re.sub(r"[^a-z0-9]+", "_", t).strip("_")
     return t[:40] or "audio"
+
+
+def _cle(texte: str) -> str:
+    """Nom de fichier lisible ET unique : slug + empreinte du texte exact."""
+    return f"{_slug(texte)}_{hashlib.md5(texte.encode('utf-8')).hexdigest()[:8]}"
 
 
 def _nettoyer_pour_tts(texte: str) -> str:
@@ -172,11 +186,18 @@ def synthetiser(texte: str) -> np.ndarray:
 def ecrire_wav(echantillons: np.ndarray, chemin: Path) -> None:
     pcm = np.clip(echantillons, -1.0, 1.0)
     pcm = (pcm * 32767.0).astype("<i2")
-    with wave.open(str(chemin), "wb") as w:
-        w.setnchannels(1)
-        w.setsampwidth(2)
-        w.setframerate(SR)
-        w.writeframes(pcm.tobytes())
+    # Fichier temporaire puis renommage : /audio ne sert jamais un wav tronque.
+    temporaire = chemin.with_name(f".{chemin.name}.{os.getpid()}.{threading.get_ident()}.tmp")
+    try:
+        with wave.open(str(temporaire), "wb") as w:
+            w.setnchannels(1)
+            w.setsampwidth(2)
+            w.setframerate(SR)
+            w.writeframes(pcm.tobytes())
+        os.replace(temporaire, chemin)
+    finally:
+        if temporaire.exists():
+            temporaire.unlink(missing_ok=True)
 
 
 def lire_wav(donnees: bytes):
@@ -221,7 +242,9 @@ def concatener(chemins, sortie: Path) -> None:
 def _fichier(nom: str, texte: str) -> Path:
     chemin = AUDIO_DIR / f"{nom}.wav"
     if not chemin.exists():
-        ecrire_wav(synthetiser(texte), chemin)
+        with _verrou_audio:
+            if not chemin.exists():
+                ecrire_wav(synthetiser(texte), chemin)
     return chemin
 
 
@@ -237,17 +260,30 @@ def fichier_chiffre(chiffre: str) -> Path:
     return _fichier(f"chiffre_{chiffre}", _texte_phrase(PHRASES["chiffres"][chiffre]))
 
 
+def _forme_fon(valeur: str, categorie: str) -> str:
+    """Relecture d'un choix ferme : on redit le mot fon, pas l'etiquette francaise."""
+    cle = ALIAS_VOCABULAIRE.get(categorie, categorie)
+    for opt in PHRASES["vocabulaire"].get(cle, []):
+        if (opt.get("valeur") or "").lower() == (valeur or "").lower():
+            return opt.get("fon") or valeur
+    return valeur
+
+
 def generer_confirmation(valeur: str, categorie: str) -> str:
     morceaux = [fichier_sys("jai_ecrit")]
     if categorie in CATEGORIES_NUMERIQUES and valeur.isdigit():
         morceaux += [fichier_chiffre(d) for d in valeur]
     else:
-        chemin_valeur = _fichier(f"val_{_slug(valeur)}", valeur)
+        texte = _forme_fon(valeur, categorie) if categorie in CATEGORIES_FERMEES else valeur
+        chemin_valeur = _fichier(f"val_{_cle(texte)}", texte)
         morceaux.append(chemin_valeur)
     morceaux.append(fichier_sys("est_bon"))
 
-    sortie = AUDIO_DIR / f"confirm_{_slug(valeur)}.wav"
-    concatener(morceaux, sortie)
+    sortie = AUDIO_DIR / f"confirm_{_cle(f'{categorie}|{valeur}')}.wav"
+    if not sortie.exists():
+        with _verrou_audio:
+            if not sortie.exists():
+                concatener(morceaux, sortie)
     return f"/audio/{sortie.name}"
 
 
@@ -264,6 +300,32 @@ _CONFUSABLES = str.maketrans({
 
 # Seuil de tolerance pour la correspondance stricte (mots courts).
 SEUIL_STRICT = 0.4
+
+# Le LLM doit renvoyer une valeur, jamais une phrase d'explication. On rejette
+# les reponses "meta" (ex. "Je ne comprends pas") qui seraient ecrites telles quelles.
+_REPONSE_META = re.compile(
+    r"incompris|comprends|comprend pas|compris|d[eé]sol[eé]|je ne |"
+    r"pas entendu|r[eé]p[eè]te|bruit|noise|hors sujet",
+    re.IGNORECASE,
+)
+
+
+def est_reponse_meta(valeur: str) -> bool:
+    v = (valeur or "").strip()
+    if not v or len(v) > 60:
+        return True
+    return bool(_REPONSE_META.search(v))
+
+
+def est_valeur_plausible(texte: str, categorie: str) -> bool:
+    """Un nom, un lieu, un email = court. Sinon on prefere redemander."""
+    t = (texte or "").strip().strip(".")
+    if not t:
+        return False
+    mots = t.split()
+    if categorie in {"nom", "prenom", "lieu", "email"}:
+        return len(t) <= 40 and len(mots) <= 3
+    return len(t) <= 80 and len(mots) <= 12
 
 
 def _normaliser(s: str) -> str:
@@ -292,7 +354,7 @@ def _levenshtein(a: str, b: str) -> int:
 
 def correspondance_stricte(texte_asr: str, categorie: str):
     """Renvoie (valeur, ratio) ; ratio proche de 0 = bonne correspondance."""
-    options = PHRASES["vocabulaire"].get(categorie, [])
+    options = PHRASES["vocabulaire"].get(ALIAS_VOCABULAIRE.get(categorie, categorie), [])
     cible = _normaliser(texte_asr)
     meilleur, meilleur_ratio = None, 1.0
     for opt in options:
@@ -349,7 +411,8 @@ def normaliser_llm(texte_fon: str, type_champ: str):
                         "(par exemple un nom beninois ou francais ecrit correctement). Si le champ "
                         "attend un nom propre, ecris le nom propre francais correspondant. "
                         "Reponds UNIQUEMENT par la valeur, sans phrase ni commentaire. "
-                        "Ne reponds INCOMPRIS que si la transcription est vide ou clairement du bruit."
+                        "N'ecris jamais de phrase comme 'je ne comprends pas' : si tu ne peux "
+                        "pas reconstituer la valeur, reponds exactement INCOMPRIS."
                     ),
                 },
                 {"role": "user", "content": f"Champ: {type_champ}\nTranscription fon: {texte_fon}"},
@@ -445,15 +508,21 @@ def analyser_ecran(image: bytes):
 # ------------------------------------------------------------------------- demarrage
 
 def preparer_audio():
-    charger_tts()
-    for nom in PHRASES["champs"]:
-        fichier_champ(nom)
-    for cle in PHRASES["systeme"]:
-        fichier_sys(cle)
-    for chiffre in PHRASES["chiffres"]:
-        fichier_chiffre(chiffre)
-    _audio_pret.set()
-    print("[startup] audio pret", flush=True)
+    # Sans le try/finally, un echec de chargement (modele absent, disque plein)
+    # laissait _audio_pret a zero : chaque requete attendait alors 120 s.
+    try:
+        charger_tts()
+        for nom in PHRASES["champs"]:
+            fichier_champ(nom)
+        for cle in PHRASES["systeme"]:
+            fichier_sys(cle)
+        for chiffre in PHRASES["chiffres"]:
+            fichier_chiffre(chiffre)
+        print("[startup] audio pret", flush=True)
+    except Exception as exc:
+        print(f"[startup] echec preparation audio : {exc}", flush=True)
+    finally:
+        _audio_pret.set()
 
 
 @app.on_event("startup")
@@ -462,6 +531,16 @@ def _au_demarrage():
 
 
 # ------------------------------------------------------------------------- routes
+
+def _refus_acces(request: Request):
+    """Renvoie une reponse 401 si le jeton partage est exige et absent/faux."""
+    if not API_TOKEN:
+        return None
+    recu = request.headers.get("X-Token", "")
+    if recu == API_TOKEN:
+        return None
+    return JSONResponse({"statut": "refuse", "erreur": "jeton"}, status_code=401)
+
 
 @app.get("/")
 def racine():
@@ -481,7 +560,10 @@ def sante():
 
 
 @app.post("/guide")
-def guide(payload: dict):
+def guide(payload: dict, request: Request):
+    refus = _refus_acces(request)
+    if refus is not None:
+        return refus
     champs = payload.get("champs") or []
     index = int(payload.get("index_courant", 0))
     type_champ = "texte"
@@ -503,8 +585,11 @@ def guide(payload: dict):
 
 
 @app.post("/comprendre")
-async def comprendre(image: UploadFile = File(...)):
+async def comprendre(request: Request, image: UploadFile = File(...)):
     """Usage general : capture d'ecran -> que dit l'assistant (en fon)."""
+    refus = _refus_acces(request)
+    if refus is not None:
+        return refus
     donnees = await image.read()
     analyse = analyser_ecran(donnees)
 
@@ -525,8 +610,7 @@ async def comprendre(image: UploadFile = File(...)):
         categorie = "texte"
 
     _audio_pret.wait(timeout=120)
-    empreinte = hashlib.md5(fon.encode("utf-8")).hexdigest()[:12]
-    chemin = _fichier(f"vision_{empreinte}", fon)
+    chemin = _fichier(f"vision_{_cle(fon)}", fon)
 
     return {
         "statut": "ok",
@@ -539,7 +623,14 @@ async def comprendre(image: UploadFile = File(...)):
 
 
 @app.post("/transcrire")
-async def transcrire(audio: UploadFile = File(...), categorie: str = Form("texte")):
+async def transcrire(
+    request: Request,
+    audio: UploadFile = File(...),
+    categorie: str = Form("texte"),
+):
+    refus = _refus_acces(request)
+    if refus is not None:
+        return refus
     donnees = await audio.read()
 
     # On collecte les transcriptions candidates : Whisper (francais) et MMS (fon).
@@ -587,21 +678,34 @@ async def transcrire(audio: UploadFile = File(...), categorie: str = Form("texte
                 break
     else:
         valeur_llm = normaliser_llm(transcription, categorie)
-        if valeur_llm and valeur_llm != "INCOMPRIS":
+        if valeur_llm and valeur_llm != "INCOMPRIS" and not est_reponse_meta(valeur_llm):
             valeur, statut = valeur_llm, "ok"
-        elif transcription and categorie in {"nom", "prenom", "lieu", "texte", "email"}:
+        elif (
+            transcription
+            and categorie in {"nom", "prenom", "lieu", "texte", "email"}
+            and not est_reponse_meta(transcription)
+            and est_valeur_plausible(transcription, categorie)
+        ):
             # Repli : on ecrit ce que l'ASR a entendu plutot que de bloquer la boucle.
             valeur, statut = transcription, "ok"
 
     reponse = {"transcription": transcription, "source": source, "valeur": valeur,
-               "statut": statut, "audio_confirmation_url": None}
+               "statut": statut, "audio_confirmation_url": None,
+               "voix_francaise": False, "audio_avant_url": None, "audio_apres_url": None}
 
     if statut == "ok" and valeur:
         _audio_pret.wait(timeout=60)
-        reponse["audio_confirmation_url"] = generer_confirmation(valeur, categorie)
+        if categorie in CATEGORIES_VOIX_FR:
+            # Rien a synthetiser en fon : l'app enchaine "Un wlan ɖɔ:" (fon),
+            # la valeur (TTS francais du telephone), puis "E nyɔ ?" (fon).
+            reponse["voix_francaise"] = True
+            reponse["audio_avant_url"] = f"/audio/{fichier_sys('jai_ecrit').name}"
+            reponse["audio_apres_url"] = f"/audio/{fichier_sys('est_bon').name}"
+        else:
+            reponse["audio_confirmation_url"] = generer_confirmation(valeur, categorie)
     else:
         _audio_pret.wait(timeout=60)
-        reponse["audio_confirmation_url"] = f"/audio/sys_incompris.wav"
+        reponse["audio_confirmation_url"] = "/audio/sys_incompris.wav"
 
     return reponse
 

@@ -20,6 +20,7 @@ import android.view.Display
 import android.view.Gravity
 import android.view.MotionEvent
 import android.view.View
+import android.view.ViewConfiguration
 import android.view.WindowManager
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -28,6 +29,7 @@ import java.io.File
 import java.util.Locale
 import java.util.concurrent.Executor
 import java.util.concurrent.Executors
+import kotlin.math.hypot
 
 /**
  * Service d'accessibilite : bulle flottante, lecture des champs, surlignage,
@@ -44,6 +46,10 @@ class GuideService : AccessibilityService() {
     private lateinit var backend: BackendClient
     private val enregistreur by lazy { EnregistreurAudio(this) }
 
+    private lateinit var bulleLp: WindowManager.LayoutParams
+    private var boutons: BoutonsView? = null
+    private val prefs by lazy { getSharedPreferences(PREFS, MODE_PRIVATE) }
+
     private var mediaPlayer: MediaPlayer? = null
     private var tts: TextToSpeech? = null
     private var ttsPret = false
@@ -57,6 +63,10 @@ class GuideService : AccessibilityService() {
     private var champs: List<Champ> = emptyList()
     private var indexCourant = 0
     private var phase = Phase.AUCUNE
+        set(value) {
+            field = value
+            if (value == Phase.AUCUNE) masquerBoutons() else afficherBoutons()
+        }
     private var enEcoute = false
     private var categorieCourante = TypeChamp.TEXTE
     private var derniereApp: String? = null
@@ -69,6 +79,7 @@ class GuideService : AccessibilityService() {
         lecteur = EcranLecteur(this)
         backend = BackendClient(this)
 
+        instance = this
         initialiserTts()
         afficherBulle()
         Log.d(TAG, "Service connecte, bulle affichee")
@@ -89,32 +100,46 @@ class GuideService : AccessibilityService() {
     private fun afficherBulle() {
         if (::bulle.isInitialized) return
         bulle = BulleView(this)
-        val lp = WindowManager.LayoutParams(
-            WindowManager.LayoutParams.WRAP_CONTENT,
-            WindowManager.LayoutParams.WRAP_CONTENT,
+        val metrics = resources.displayMetrics
+        val marge = (12 * metrics.density).toInt()
+        bulleLp = WindowManager.LayoutParams(
+            bulle.taille,
+            bulle.taille,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
             PixelFormat.TRANSLUCENT
-        )
-        lp.gravity = Gravity.END or Gravity.CENTER_VERTICAL
-        lp.horizontalMargin = 0.05f
-        lp.verticalMargin = 0.05f
-        wm.addView(bulle, lp)
+        ).apply {
+            gravity = Gravity.TOP or Gravity.START
+            x = prefs.getInt(CLE_X, metrics.widthPixels - bulle.taille - marge)
+            y = prefs.getInt(CLE_Y, metrics.heightPixels / 3)
+        }
+        wm.addView(bulle, bulleLp)
         installerTouches()
     }
 
     // ------------------------------------------------------------------ touches
 
     private fun installerTouches() {
+        val seuil = ViewConfiguration.get(this).scaledTouchSlop
         var appuiLong = false
+        var deplace = false
         var heureAppui = 0L
+        var departX = 0
+        var departY = 0
+        var toucheX = 0f
+        var toucheY = 0f
         var rappel: Runnable? = null
 
         bulle.setOnTouchListener { _, event ->
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
                     appuiLong = false
+                    deplace = false
                     heureAppui = System.currentTimeMillis()
+                    departX = bulleLp.x
+                    departY = bulleLp.y
+                    toucheX = event.rawX
+                    toucheY = event.rawY
                     rappel = Runnable {
                         if (peutEnregistrer()) {
                             appuiLong = true
@@ -124,26 +149,154 @@ class GuideService : AccessibilityService() {
                     true
                 }
 
+                MotionEvent.ACTION_MOVE -> {
+                    // Pendant l'enregistrement le doigt bouge forcement : on ne
+                    // deplace pas la bulle, sinon on coupe la parole.
+                    if (!enEcoute) {
+                        val dx = event.rawX - toucheX
+                        val dy = event.rawY - toucheY
+                        if (!deplace && hypot(dx, dy) > seuil) {
+                            deplace = true
+                            rappel?.let { bulle.removeCallbacks(it) }
+                        }
+                        if (deplace) deplacerBulle(departX + dx.toInt(), departY + dy.toInt())
+                    }
+                    true
+                }
+
                 MotionEvent.ACTION_UP -> {
                     rappel?.let { bulle.removeCallbacks(it) }
                     val duree = System.currentTimeMillis() - heureAppui
-                    if (enEcoute) {
-                        arreterEtEnvoyer()
-                    } else if (!appuiLong && duree < DELAI_APPUI_LONG) {
-                        bulle.performClick()
-                        surTape()
+                    when {
+                        enEcoute -> arreterEtEnvoyer()
+                        deplace -> enregistrerPosition()
+                        !appuiLong && duree < DELAI_APPUI_LONG -> {
+                            bulle.performClick()
+                            surTape()
+                        }
                     }
                     true
                 }
 
                 MotionEvent.ACTION_CANCEL -> {
                     rappel?.let { bulle.removeCallbacks(it) }
-                    if (enEcoute) arreterEtEnvoyer()
+                    when {
+                        enEcoute -> arreterEtEnvoyer()
+                        deplace -> enregistrerPosition()
+                    }
                     true
                 }
 
                 else -> false
             }
+        }
+    }
+
+    private fun deplacerBulle(x: Int, y: Int) {
+        val metrics = resources.displayMetrics
+        bulleLp.x = x.coerceIn(0, (metrics.widthPixels - bulle.taille).coerceAtLeast(0))
+        bulleLp.y = y.coerceIn(0, (metrics.heightPixels - bulle.taille).coerceAtLeast(0))
+        try {
+            wm.updateViewLayout(bulle, bulleLp)
+        } catch (e: Exception) {
+            Log.w(TAG, "deplacement : ${e.message}")
+        }
+        positionnerBoutons()
+    }
+
+    /** La bulle reste ou l'utilisatrice l'a posee, meme apres un redemarrage. */
+    private fun enregistrerPosition() {
+        prefs.edit().putInt(CLE_X, bulleLp.x).putInt(CLE_Y, bulleLp.y).apply()
+    }
+
+    // ------------------------------------------------- boutons valider / annuler
+
+    private fun afficherBoutons() {
+        if (boutons != null) {
+            positionnerBoutons()
+            return
+        }
+        val vue = BoutonsView(this, surValider = { valider() }, surAnnuler = { annuler() })
+        val lp = WindowManager.LayoutParams(
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.WRAP_CONTENT,
+            WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+            WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE,
+            PixelFormat.TRANSLUCENT
+        ).apply { gravity = Gravity.TOP or Gravity.START }
+        try {
+            wm.addView(vue, lp)
+            boutons = vue
+            vue.post { positionnerBoutons() }
+        } catch (e: Exception) {
+            Log.w(TAG, "boutons : ${e.message}")
+        }
+    }
+
+    /** Les boutons suivent la bulle : a sa gauche, a sa droite s'il manque la place. */
+    private fun positionnerBoutons() {
+        val vue = boutons ?: return
+        val lp = vue.layoutParams as? WindowManager.LayoutParams ?: return
+        val metrics = resources.displayMetrics
+        val largeur = if (vue.width > 0) vue.width else (76 * metrics.density).toInt()
+        val hauteur = if (vue.height > 0) vue.height else (152 * metrics.density).toInt()
+        val marge = (8 * metrics.density).toInt()
+
+        var x = bulleLp.x - largeur - marge
+        if (x < 0) x = bulleLp.x + bulle.taille + marge
+        lp.x = x.coerceIn(0, (metrics.widthPixels - largeur).coerceAtLeast(0))
+        lp.y = (bulleLp.y + bulle.taille / 2 - hauteur / 2)
+            .coerceIn(0, (metrics.heightPixels - hauteur).coerceAtLeast(0))
+        try {
+            wm.updateViewLayout(vue, lp)
+        } catch (e: Exception) {
+            Log.w(TAG, "position boutons : ${e.message}")
+        }
+    }
+
+    private fun masquerBoutons() {
+        val vue = boutons ?: return
+        boutons = null
+        try {
+            if (vue.parent != null) wm.removeView(vue)
+        } catch (_: Exception) {
+        }
+    }
+
+    /** Bouton vert : vaut un "oui" parle, ou passe au champ suivant. */
+    private fun valider() {
+        if (enEcoute) return
+        if (phase != Phase.AUCUNE) champSuivant()
+    }
+
+    /** Bouton rouge : vaut un "non" parle, sinon arrete la consigne en cours. */
+    private fun annuler() {
+        if (enEcoute) {
+            enregistreur.arreter()?.delete()
+            enEcoute = false
+        }
+        if (phase == Phase.ATTENTE_CONFIRMATION) {
+            recommencerChamp()
+            return
+        }
+        arreterTout()
+    }
+
+    /** Coupe la parole, efface le surlignage, remet l'assistant au repos. */
+    private fun arreterTout() {
+        arreterAudio()
+        phase = Phase.AUCUNE
+        retirerSurlignage()
+        changerEtat(Etat.REPOS)
+    }
+
+    /** Desactive le service depuis l'ecran d'accueil, sans passer par les reglages. */
+    fun desactiver() {
+        arreterTout()
+        try {
+            disableSelf()
+        } catch (e: Exception) {
+            Log.w(TAG, "disableSelf : ${e.message}")
         }
     }
 
@@ -236,6 +389,8 @@ class GuideService : AccessibilityService() {
             focaliser(index)
             surligner(index)
         } else {
+            // Aucun champ retrouve : on n'ecrit pas dans celui de l'ecran precedent.
+            indexCourant = -1
             retirerSurlignage()
         }
 
@@ -331,8 +486,10 @@ class GuideService : AccessibilityService() {
 
         executeur.execute {
             val reponse = backend.transcrire(fichier, categorie)
-            // Diagnostic : on conserve l'enregistrement pour pouvoir l'ecouter.
-            Log.d(TAG, "Audio garde : ${fichier.absolutePath} (${fichier.length()} octets)")
+            // Rien n'est conserve : l'audio est efface des qu'il est envoye.
+            val taille = fichier.length()
+            fichier.delete()
+            Log.d(TAG, "Audio envoye puis efface ($taille octets)")
             ui.post {
                 if (enConfirmation) traiterConfirmation(reponse) else traiterValeur(reponse)
             }
@@ -361,6 +518,26 @@ class GuideService : AccessibilityService() {
         val valeur = reponse.valeur
         ecrireValeur(valeur)
         phase = Phase.ATTENTE_CONFIRMATION
+        relire(reponse, valeur)
+    }
+
+    /**
+     * Relecture avant validation. Le TTS fon prononce un nom francais avec les
+     * phonemes fon : inaudible, donc impossible a valider. Pour ces champs on
+     * garde les phrases fon du backend et on intercale la valeur dite par le
+     * TTS francais du telephone.
+     */
+    private fun relire(reponse: ReponseTranscription, valeur: String) {
+        if (reponse.voixFrancaise) {
+            jouerSequence(
+                listOf(
+                    backend.urlAbsolue(reponse.audioAvantUrl) to SecoursDemo.jaiEcrit(),
+                    null to valeur,
+                    backend.urlAbsolue(reponse.audioApresUrl) to SecoursDemo.estBon()
+                )
+            ) { changerEtat(Etat.REPOS) }
+            return
+        }
         jouerAudio(backend.urlAbsolue(reponse.audioConfirmationUrl), SecoursDemo.confirmation(valeur)) {
             changerEtat(Etat.REPOS)
         }
@@ -395,7 +572,7 @@ class GuideService : AccessibilityService() {
     }
 
     private fun champSuivant() {
-        if (indexCourant + 1 < champs.size) {
+        if (indexCourant >= 0 && indexCourant + 1 < champs.size) {
             allerAuChamp(indexCourant + 1)
         } else {
             phase = Phase.AUCUNE
@@ -406,6 +583,11 @@ class GuideService : AccessibilityService() {
 
     private fun recommencerChamp() {
         ecrireValeur("")
+        if (champs.getOrNull(indexCourant) == null) {
+            phase = Phase.ATTENTE_VALEUR
+            jouerAudio(null, SecoursDemo.instruction(categorieCourante)) { changerEtat(Etat.REPOS) }
+            return
+        }
         allerAuChamp(indexCourant)
     }
 
@@ -458,8 +640,22 @@ class GuideService : AccessibilityService() {
         }
     }
 
+    private fun jouerSequence(elements: List<Pair<String?, String>>, onFin: () -> Unit) {
+        val premier = elements.firstOrNull()
+        if (premier == null) {
+            onFin()
+            return
+        }
+        jouerAudio(premier.first, premier.second) { jouerSequence(elements.drop(1), onFin) }
+    }
+
     private fun finirAudio(onFin: () -> Unit) {
+        val mp = mediaPlayer
         mediaPlayer = null
+        try {
+            mp?.release()
+        } catch (_: Exception) {
+        }
         onFin()
     }
 
@@ -490,11 +686,12 @@ class GuideService : AccessibilityService() {
     }
 
     private fun ecrireValeur(valeur: String): Boolean {
-        val node = lecteur.noeud(indexCourant)
+        val node = lecteur.noeud(indexCourant) ?: lecteur.noeudFocalise()
         if (node == null) {
             Log.w(TAG, "Aucun noeud pour le champ $indexCourant")
             return false
         }
+        if (node.isCheckable) return cocher(node, valeur)
         return try {
             node.performAction(AccessibilityNodeInfo.ACTION_FOCUS)
             val arguments = Bundle().apply {
@@ -514,6 +711,21 @@ class GuideService : AccessibilityService() {
             }
         } catch (e: Exception) {
             Log.w(TAG, "ecriture : ${e.message}")
+            false
+        }
+    }
+
+    /** Case a cocher : on ne clique que si l'etat demande differe de l'etat actuel. */
+    private fun cocher(node: AccessibilityNodeInfo, valeur: String): Boolean {
+        val reponse = valeur.lowercase(Locale.FRENCH)
+        val veutCocher = reponse.contains("oui") || reponse.contains("\u025b\u025bn") || reponse == "1"
+        if (node.isChecked == veutCocher) return true
+        return try {
+            node.performAction(AccessibilityNodeInfo.ACTION_CLICK).also {
+                Log.d(TAG, "case : cochee=$veutCocher ok=$it")
+            }
+        } catch (e: Exception) {
+            Log.w(TAG, "cocher : ${e.message}")
             false
         }
     }
@@ -653,11 +865,17 @@ class GuideService : AccessibilityService() {
     override fun onDestroy() {
         super.onDestroy()
         ui.removeCallbacks(rafraichirRunnable)
+        if (enEcoute) {
+            enEcoute = false
+            enregistreur.arreter()?.delete()
+        }
         try {
             executeur.shutdown()
         } catch (_: Exception) {
         }
         arreterAudio()
+        masquerBoutons()
+        instance = null
         try {
             tts?.shutdown()
         } catch (_: Exception) {
@@ -678,5 +896,13 @@ class GuideService : AccessibilityService() {
         const val TAG = "GuideService"
         private const val DELAI_APPUI_LONG = 350L
         private const val DELAI_RAFRAICHISSEMENT = 120L
+        private const val PREFS = "assistantfon"
+        private const val CLE_X = "bulle_x"
+        private const val CLE_Y = "bulle_y"
+
+        /** Service en cours, pour que l'ecran d'accueil puisse le desactiver. */
+        @Volatile
+        var instance: GuideService? = null
+            private set
     }
 }

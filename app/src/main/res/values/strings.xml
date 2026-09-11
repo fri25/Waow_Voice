@@ -19,13 +19,20 @@
     <string name="micro_ko">Non autorise</string>
 
     <string name="autoriser_micro">Autoriser le microphone</string>
+    <string name="desactiver_assistant">Desactiver l\'assistant</string>
+    <string name="assistant_desactive">Assistant desactive</string>
+    <string name="assistant_absent">L\'assistant n\'est pas actif</string>
+    <string name="bouton_valider">Valider</string>
+    <string name="bouton_annuler">Annuler</string>
     <string name="url_backend">Adresse du backend</string>
     <string name="enregistrer_url">Enregistrer l\'adresse</string>
     <string name="url_enregistree">Adresse enregistree</string>
+    <string name="jeton_backend">Jeton d\'acces (facultatif)</string>
+    <string name="jeton_indice">Laisse vide si le serveur n\'en demande pas.</string>
     <string name="mode_demo">Mode demo hors-ligne</string>
     <string name="mode_demo_detail">Sans serveur : l\'appli invente les reponses pour la demo.</string>
 
-    <string name="aide">1. Autorise le micro, puis active le service d\'accessibilite.\n2. Ouvre un formulaire et touche la bulle pour ecouter la consigne.\n3. Maintiens la bulle pour parler, relache pour envoyer.\n4. Reponds oui ou non pour confirmer.</string>
+    <string name="aide">1. Autorise le micro, puis active le service d\'accessibilite.\n2. Ouvre un formulaire et touche la bulle pour ecouter la consigne.\n3. Maintiens la bulle pour parler, relache pour envoyer.\n4. Reponds oui ou non, ou utilise les boutons vert et rouge.\n5. Glisse la bulle pour la deplacer.</string>
     <string name="etape_ou_activer">Reglages > Accessibilite > Assistant Fon, puis active.</string>
 
     <string name="bulle_repos">FON</string>

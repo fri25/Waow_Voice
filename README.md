@@ -30,12 +30,13 @@ La boucle complète est :
 | Application | Android natif, **Kotlin**, `AccessibilityService` |
 | Overlay / surlignage | `TYPE_ACCESSIBILITY_OVERLAY` (aucune permission spéciale) |
 | Capture voix | `AudioRecord` → **WAV mono 16 kHz** |
-| ASR fon | `Professor/mms-300m-fongbe` (Wav2Vec2ForCTC, CPU) |
+| ASR fon | **GRIOT-ASR** (`bivariant/griot-asr`, adapter fon, GPU) |
 | ASR français | **Whisper** via l'API **Groq** (noms, accents) |
 | TTS fon | `facebook/mms-tts-fon` (VITS, CPU), `.wav` pré-générés |
-| LLM | **DeepSeek** — uniquement champs à texte libre |
+| Traduction fon→fr | **Griot-MT** (`bivariant/griot-mt`, adapter fon) |
+| LLM | **DeepSeek** — noms propres et vision d'écran |
 | Backend | **FastAPI** (Python), conteneur Docker |
-| Hébergement | AWS **Lightsail / EC2** |
+| Hébergement | Kernel **Kaggle** (GPU T4) + tunnel Cloudflare |
 | Code backend | dépôt **Hugging Face Dataset** (public) |
 
 ### Règle de routage
@@ -75,8 +76,15 @@ L'`AccessibilityService` voit l'écran et l'application écoute le micro : c'est
 profil d'un *spyware*. Le projet s'y engage explicitement :
 
 1. **Le micro n'écoute que sur appui long.** Jamais en continu, pas de mot-clé.
-2. **Rien n'est conservé.** L'audio est traité puis supprimé. Aucune base de données.
+2. **Rien n'est conservé.** L'audio est supprimé du téléphone dès qu'il est
+   envoyé, et le backend n'a aucune base de données.
 3. **Aucune frappe clavier n'est lue**, uniquement la structure des champs.
+4. **La capture d'écran part chez un tiers.** Un tap sur la bulle envoie l'écran
+   entier à DeepSeek (`/comprendre`) : tout ce qui est affiché à cet instant est
+   transmis. L'utilisatrice déclenche elle-même chaque envoi, jamais l'appli.
+5. **Le backend doit être protégé.** Définir `API_TOKEN` côté serveur et le même
+   jeton dans l'app (écran Serveur), et servir en **HTTPS** : sans cela, voix et
+   captures d'écran circulent en clair sur un endpoint ouvert à tous.
 
 ## Démarrage rapide
 
@@ -90,12 +98,15 @@ profil d'un *spyware*. Le projet s'y engage explicitement :
 Dans l'app : autoriser le micro, activer le service d'accessibilité, renseigner
 l'adresse du backend.
 
-**Backend** (sur une machine Ubuntu / EC2)
+**Backend** (kernel Kaggle, GPU T4)
 
 ```bash
-git clone https://huggingface.co/datasets/octavebahoun/assistant-fon-backend /opt/assistantfon
-cd /opt/assistantfon
-sudo DEEPSEEK_API_KEY='...' GROQ_API_KEY='...' bash install.sh
+# app.py et phrases_fon.json sont lus depuis le depot HF : les y pousser d'abord.
+kaggle kernels push -p backend/kaggle --accelerator NvidiaTeslaT4
 ```
+
+L'URL du tunnel s'affiche dans le log du kernel et **change à chaque relance** :
+la recopier dans l'app (écran Serveur). Sur une machine Ubuntu / EC2, l'ancien
+chemin reste valable : `bash install.sh` (voir `backend/README.md`).
 
 Endpoints : `POST /guide`, `POST /transcrire`, `GET /sante`.

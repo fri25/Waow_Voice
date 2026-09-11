@@ -21,18 +21,20 @@ class BulleView(context: Context) : TextView(context) {
     private val fond = GradientDrawable()
     private val animations = mutableListOf<ObjectAnimator>()
 
+    /** Diametre de la bulle, en pixels : sert aussi a placer la fenetre. */
+    val taille = (128 * resources.displayMetrics.density).toInt()
+
     init {
         gravity = Gravity.CENTER
         setTextColor(Color.WHITE)
-        textSize = 16f
+        textSize = 20f
         typeface = Typeface.DEFAULT_BOLD
-        elevation = 10f
+        elevation = 12f
 
-        val taille = (100 * resources.displayMetrics.density).toInt()
         layoutParams = ViewGroup.LayoutParams(taille, taille)
 
         fond.shape = GradientDrawable.OVAL
-        fond.setStroke((3 * resources.displayMetrics.density).toInt(), Color.WHITE)
+        fond.setStroke((4 * resources.displayMetrics.density).toInt(), Color.WHITE)
         background = fond
 
         changerEtat(Etat.REPOS)

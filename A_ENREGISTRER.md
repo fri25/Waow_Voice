@@ -24,6 +24,7 @@ Format libre (m4a/mp3/wav), pièce calme, débit normal. Je convertirai en WAV 1
 | 15 | `email` | ɖɔ adlɛsi e-mail towe tɔn. |
 | 16 | `nombre` | ɖɔ kɛ́n enɛ nú mì, kɛ́n ɖokpo ɖokpo. |
 | 17 | `texte` | Xósin nú gle elɔ. |
+| 17b | `case` | Ðɔ Ɛɛn abǐ gbeɖé nú mì. *(cases à cocher — phrase à valider)* |
 
 ## Phrases système
 

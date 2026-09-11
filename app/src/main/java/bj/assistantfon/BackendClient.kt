@@ -30,6 +30,13 @@ class BackendClient(context: Context) {
             prefs.edit().putString(CLE_URL, value.trim().trimEnd('/')).apply()
         }
 
+    /** Jeton partage (en-tete X-Token) ; vide = backend ouvert. */
+    var jeton: String
+        get() = prefs.getString(CLE_JETON, "") ?: ""
+        set(value) {
+            prefs.edit().putString(CLE_JETON, value.trim()).apply()
+        }
+
     var modeDemoHorsLigne: Boolean
         get() = prefs.getBoolean(CLE_DEMO, false)
         set(value) = prefs.edit().putBoolean(CLE_DEMO, value).apply()
@@ -58,6 +65,7 @@ class BackendClient(context: Context) {
                 readTimeout = 15000
                 doOutput = true
                 setRequestProperty("Content-Type", "application/json; charset=utf-8")
+                ajouterJeton(this)
             }
             conn.outputStream.use { it.write(corps.toByteArray(Charsets.UTF_8)) }
 
@@ -94,6 +102,7 @@ class BackendClient(context: Context) {
                 doOutput = true
                 setChunkedStreamingMode(0)
                 setRequestProperty("Content-Type", "multipart/form-data; boundary=$limite")
+                ajouterJeton(this)
             }
 
             DataOutputStream(conn.outputStream).use { out ->
@@ -116,7 +125,10 @@ class BackendClient(context: Context) {
                 transcription = chaineOuNull(json, "transcription"),
                 valeur = chaineOuNull(json, "valeur"),
                 statut = chaineOuNull(json, "statut") ?: "incompris",
-                audioConfirmationUrl = chaineOuNull(json, "audio_confirmation_url")
+                audioConfirmationUrl = chaineOuNull(json, "audio_confirmation_url"),
+                voixFrancaise = json.optBoolean("voix_francaise", false),
+                audioAvantUrl = chaineOuNull(json, "audio_avant_url"),
+                audioApresUrl = chaineOuNull(json, "audio_apres_url")
             )
         } catch (e: Exception) {
             Log.w(TAG, "transcrire echec : ${e.message}")
@@ -137,6 +149,7 @@ class BackendClient(context: Context) {
                 doOutput = true
                 setChunkedStreamingMode(0)
                 setRequestProperty("Content-Type", "multipart/form-data; boundary=$limite")
+                ajouterJeton(this)
             }
 
             DataOutputStream(conn.outputStream).use { out ->
@@ -166,6 +179,11 @@ class BackendClient(context: Context) {
             Log.w(TAG, "comprendre echec : ${e.message}")
             null
         }
+    }
+
+    private fun ajouterJeton(conn: HttpURLConnection) {
+        val valeur = jeton
+        if (valeur.isNotBlank()) conn.setRequestProperty("X-Token", valeur)
     }
 
     /** Transforme une URL relative renvoyee par le backend en URL absolue. */
@@ -212,6 +230,7 @@ class BackendClient(context: Context) {
         private const val PREFS = "assistantfon"
         private const val CLE_URL = "base_url"
         private const val CLE_DEMO = "mode_demo"
+        private const val CLE_JETON = "jeton"
         const val URL_PAR_DEFAUT = "http://127.0.0.1:8000"
     }
 }

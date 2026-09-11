@@ -6,7 +6,10 @@ import java.text.Normalizer
 data class Champ(
     val index: Int,
     val label: String,
-    val type: String
+    val type: String,
+    /** Case a cocher / interrupteur / bouton radio : on clique au lieu d'ecrire. */
+    val cochable: Boolean = false,
+    val coche: Boolean = false
 )
 
 /** Reponse de POST /guide. */
@@ -21,7 +24,13 @@ data class ReponseTranscription(
     val transcription: String?,
     val valeur: String?,
     val statut: String,
-    val audioConfirmationUrl: String?
+    val audioConfirmationUrl: String?,
+    /** La valeur est un mot francais : a lire par le TTS du telephone. */
+    val voixFrancaise: Boolean = false,
+    /** Phrase fon "j'ai ecrit", jouee avant la valeur. */
+    val audioAvantUrl: String? = null,
+    /** Phrase fon "c'est bon ?", jouee apres la valeur. */
+    val audioApresUrl: String? = null
 )
 
 /** Reponse de POST /comprendre (vision de l'ecran -> consigne fon). */
@@ -58,6 +67,7 @@ object TypeChamp {
     const val NOMBRE = "nombre"
     const val TEXTE = "texte"
     const val OUI_NON = "oui_non"
+    const val CASE = "case"
 
     private fun sansAccent(s: String): String =
         Normalizer.normalize(s.lowercase(), Normalizer.Form.NFD)
@@ -125,12 +135,17 @@ object SecoursDemo {
         TypeChamp.MATRIMONIAL -> "Dis-moi ta situation matrimoniale."
         TypeChamp.EMAIL -> "Dicte ton adresse email."
         TypeChamp.NOMBRE -> "Dis-moi ce nombre, un chiffre apres l'autre."
+        TypeChamp.CASE -> "Dis oui pour cocher cette case, ou non."
         else -> "Reponds pour ce champ."
     }
 
     fun reponseIncomprise(): String = "Je n'ai pas bien entendu, repete."
 
     fun confirmation(valeur: String): String = "J'ai ecrit : $valeur. C'est bon ?"
+
+    fun jaiEcrit(): String = "J'ai ecrit :"
+
+    fun estBon(): String = "C'est bon ?"
 
     fun fin(): String = "Tu as fini, c'est bon."
 
@@ -151,6 +166,7 @@ object SecoursDemo {
         TypeChamp.MATRIMONIAL -> "Celibataire"
         TypeChamp.EMAIL -> "awa.agbodjan@example.com"
         TypeChamp.OUI_NON -> "oui"
+        TypeChamp.CASE -> "oui"
         else -> "Reponse"
     }
 }

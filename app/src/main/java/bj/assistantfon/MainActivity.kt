@@ -64,6 +64,9 @@ class MainActivity : Activity() {
         valeurMicro = ligneMicro.second
         contenu.addView(ligneMicro.third)
         contenu.addView(bouton(getString(R.string.autoriser_micro), primaire = false) { demanderMicro() })
+        contenu.addView(bouton(getString(R.string.desactiver_assistant), primaire = false) {
+            desactiverAssistant()
+        })
 
         contenu.addView(sectionTitre(getString(R.string.section_serveur)))
         contenu.addView(texte(getString(R.string.url_backend), 14f, getColor(R.color.texte_secondaire))
@@ -78,13 +81,30 @@ class MainActivity : Activity() {
             setText(backend.baseUrl)
         }
         contenu.addView(champUrl)
+
+        contenu.addView(texte(getString(R.string.jeton_backend), 14f, getColor(R.color.texte_secondaire))
+            .apply { setPadding(0, dp(16), 0, dp(8)) })
+
+        val champJeton = EditText(this).apply {
+            setSingleLine(true)
+            textSize = 16f
+            setTextColor(getColor(R.color.texte))
+            background = getDrawable(R.drawable.champ)
+            setPadding(dp(16), dp(14), dp(16), dp(14))
+            setText(backend.jeton)
+        }
+        contenu.addView(champJeton)
+        contenu.addView(texte(getString(R.string.jeton_indice), 13f, getColor(R.color.texte_secondaire))
+            .apply { setPadding(0, dp(4), 0, 0) })
+
         contenu.addView(bouton(getString(R.string.enregistrer_url), primaire = false) {
             val valeur = champUrl.text.toString().trim()
             if (valeur.isNotEmpty()) {
                 backend.baseUrl = valeur
                 champUrl.setText(backend.baseUrl)
-                Toast.makeText(this, R.string.url_enregistree, Toast.LENGTH_SHORT).show()
             }
+            backend.jeton = champJeton.text.toString()
+            Toast.makeText(this, R.string.url_enregistree, Toast.LENGTH_SHORT).show()
         })
 
         contenu.addView(Switch(this).apply {
@@ -230,6 +250,18 @@ class MainActivity : Activity() {
             "$packageName/.GuideService"
         )
         return actifs.split(':').any { actif -> formes.any { it.equals(actif, ignoreCase = true) } }
+    }
+
+    /** Coupe le service sans obliger a retrouver le reglage d'accessibilite. */
+    private fun desactiverAssistant() {
+        val service = GuideService.instance
+        if (service == null) {
+            Toast.makeText(this, R.string.assistant_absent, Toast.LENGTH_SHORT).show()
+            return
+        }
+        service.desactiver()
+        Toast.makeText(this, R.string.assistant_desactive, Toast.LENGTH_SHORT).show()
+        majStatuts()
     }
 
     private fun demanderMicro() {

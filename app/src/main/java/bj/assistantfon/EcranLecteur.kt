@@ -25,11 +25,25 @@ class EcranLecteur(private val service: AccessibilityService) {
         return trouves.mapIndexed { i, n ->
             noeuds.add(n)
             val label = libelleDe(n)
-            Champ(index = i, label = label, type = TypeChamp.deviner(label))
+            val cochable = estCase(n)
+            Champ(
+                index = i,
+                label = label,
+                type = if (cochable) TypeChamp.CASE else TypeChamp.deviner(label),
+                cochable = cochable,
+                coche = n.isChecked
+            )
         }
     }
 
     fun noeud(index: Int): AccessibilityNodeInfo? = noeuds.getOrNull(index)
+
+    /** Champ de saisie qui a le focus : repli quand l'index du champ est inconnu. */
+    fun noeudFocalise(): AccessibilityNodeInfo? = try {
+        service.findFocus(AccessibilityNodeInfo.FOCUS_INPUT)?.takeIf { it.isEditable }
+    } catch (_: Exception) {
+        null
+    }
 
     fun bounds(index: Int): Rect? {
         val node = noeuds.getOrNull(index) ?: return null
@@ -61,10 +75,16 @@ class EcranLecteur(private val service: AccessibilityService) {
         noeuds.clear()
     }
 
-    private fun parcourir(node: AccessibilityNodeInfo?, sortie: MutableList<AccessibilityNodeInfo>) {
-        if (node == null) return
-        if (estChampSaisie(node) && node.isVisibleToUser && node.isEnabled) sortie.add(node)
-        for (i in 0 until node.childCount) parcourir(node.getChild(i), sortie)
+    private fun parcourir(
+        node: AccessibilityNodeInfo?,
+        sortie: MutableList<AccessibilityNodeInfo>,
+        profondeur: Int = 0
+    ) {
+        if (node == null || profondeur > PROFONDEUR_MAX || sortie.size >= CHAMPS_MAX) return
+        if ((estChampSaisie(node) || estCase(node)) && node.isVisibleToUser && node.isEnabled) {
+            sortie.add(node)
+        }
+        for (i in 0 until node.childCount) parcourir(node.getChild(i), sortie, profondeur + 1)
     }
 
     private fun estChampSaisie(node: AccessibilityNodeInfo): Boolean {
@@ -73,7 +93,20 @@ class EcranLecteur(private val service: AccessibilityService) {
         return classe.contains("EditText") || classe.contains("TextField")
     }
 
+    /** Case a cocher, interrupteur ou bouton radio. */
+    private fun estCase(node: AccessibilityNodeInfo): Boolean {
+        if (node.isCheckable) return true
+        val classe = node.className?.toString() ?: return false
+        return classe.contains("CheckBox") || classe.contains("RadioButton") ||
+            classe.contains("Switch") || classe.contains("ToggleButton")
+    }
+
     private fun libelleDe(node: AccessibilityNodeInfo): String {
+        // Une case porte son libelle elle-meme, contrairement a un champ de saisie.
+        if (estCase(node)) {
+            node.text?.toString()?.takeIf { it.isNotBlank() }?.let { return nettoyer(it) }
+            node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { return nettoyer(it) }
+        }
         node.hintText?.toString()?.takeIf { it.isNotBlank() }?.let { return nettoyer(it) }
         node.contentDescription?.toString()?.takeIf { it.isNotBlank() }?.let { return nettoyer(it) }
 
@@ -134,6 +167,11 @@ class EcranLecteur(private val service: AccessibilityService) {
             if (propre.length >= 3 && propre.any { it.isLetter() }) return propre
         }
         return ""
+    }
+
+    private companion object {
+        const val PROFONDEUR_MAX = 60
+        const val CHAMPS_MAX = 60
     }
 
     private fun nettoyer(texte: String): String =
